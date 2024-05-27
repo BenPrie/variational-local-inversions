@@ -2,6 +2,7 @@
 from random import choice
 from functools import reduce
 from tqdm.notebook import tqdm
+import numpy as np
 
 from qiskit import QuantumCircuit, execute
 from qiskit_aer import AerSimulator
@@ -86,7 +87,7 @@ def big_tensor(state_vector_list):
 
 
 # The full dataset generation procedure.
-def generate_dataset(U, N):
+def generate_dataset(U, N, product_states=True):
     # Instantiate a backend simulator and dataset list.
     backend = AerSimulator()
     dataset = []
@@ -103,11 +104,40 @@ def generate_dataset(U, N):
         # Translate the measurement outcome string to the corresponding state vector.
         state_outcomes = measurements_to_state_vectors(output_bases, measurement_outcomes)
 
-        # Covert the state lists into product states.
-        input_states = big_tensor(input_states)
-        state_outcomes = big_tensor(state_outcomes)
+        if product_states:
+            # Covert the state lists into product states.
+            input_states = big_tensor(input_states)
+            state_outcomes = big_tensor(state_outcomes)
 
         # Append to the dataset.
         dataset.append((input_states, state_outcomes))
 
     return dataset
+
+
+# Reuse a given classical dataset to create 3n datasets to be used for learning approx. Heisenberg-evolved Pauli obs.
+def expand_into_datasets(dataset):
+    # Assumes the dataset does NOT consist of product states but instead arrays of qubits. It'll be easier this way.
+
+    # Storing each dataset as a value in a dictionary, indexed by its Pauli basis P and qubit i (i.e. tuple indexing).
+    datasets = {}
+
+    # Let's have the incoming dataset as a numpy array.
+    dataset = np.array(dataset)
+
+    # Defining the Pauli bases.
+    X, Y, Z = np.array([[0, 1], [1, 0]]), np.array([[0, -1j], [1j, 0]]), np.array([[1, 0], [0, -1]])
+    pauli_bases = [X, Y, Z]
+
+    # Loop over all P and all i.
+    for i in tqdm(range(dataset.shape[2]), desc='Expanding dataset'):
+        for P in range(3):
+            # Instantiate the new dataset array.
+            datasets[(P, i)] = []
+
+            # Loop over all output samples in the dataset.
+            for phi_i in dataset[:, 1, i, :]:
+                # Compute the new output as per Lemma 12 and add to the appropriate dataset.
+                datasets[(P, i)].append(3 * (phi_i.T @ pauli_bases[P] @ phi_i))
+
+    return datasets
