@@ -136,8 +136,10 @@ def expand_into_datasets(dataset):
             datasets[(P, i)] = []
 
             # Loop over all output samples in the dataset.
-            for psi_i, phi_i in dataset[:, :, i, :]:
+            for psi_ell, phi_ell in dataset:
+                phi_i = phi_ell[i]
+
                 # Compute the new output as per Lemma 12 and add to the appropriate dataset.
-                datasets[(P, i)].append((psi_i, 3 * (phi_i.T @ pauli_bases[P] @ phi_i)))
+                datasets[(P, i)].append((psi_ell, 3 * (phi_i.T @ pauli_bases[P] @ phi_i)))
 
     return datasets
