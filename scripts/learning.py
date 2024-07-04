@@ -6,22 +6,21 @@ from os import makedirs, path
 import csv
 
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
-from qiskit.circuit.library import RealAmplitudes, TwoLocal
+from qiskit.circuit.library import TwoLocal
 from qiskit.circuit import ParameterVector
 
 # Classical ML.
 import torch
-from torch.nn import Module, Sequential
+from torch.nn import Module
 from torch.optim import Adam
 from torch import manual_seed
-from torch.utils.data import DataLoader
-from sklearn.model_selection import train_test_split
 
 # Quantum ML.
 from qiskit_algorithms.utils import algorithm_globals
-from qiskit_machine_learning.connectors import TorchConnector
-from qiskit_machine_learning.neural_networks import SamplerQNN
 from qiskit_algorithms.optimizers import COBYLA
+
+# Scripts.
+from scripts.utils import sample_haar_random_state_angles, sample_n_states
 
 # Plotting.
 from IPython.display import clear_output
@@ -74,7 +73,7 @@ def plot_loss_curves(train_losses, val_losses, n_epochs):
     plt.show()
 
 
-def build_qnn_circuit(U, ansatz_reps, target_qubits, entanglement_method='full', seed=42):
+def build_qnn_circuit(U, ansatz_reps, target_qubits, entanglement_method='full', multi_swap=False, seed=42):
 
     # Reset the seed for RNG.
     set_seed(seed)
@@ -119,8 +118,13 @@ def build_qnn_circuit(U, ansatz_reps, target_qubits, entanglement_method='full',
     aux_idx = circuit.num_qubits - 1
     circuit.h(aux_idx)
 
-    for i, q in enumerate(target_qubits):
-        circuit.cswap(control_qubit=aux_idx, target_qubit1=q, target_qubit2=U.num_qubits + i)
+    if multi_swap:
+        print(target_qubits, list(range(U.num_qubits, circuit.num_qubits - 1)))
+        circuit.cswap(control_qubit=aux_idx, target_qubit1=q_reg[target_qubits], target_qubit2=q_reg[list(range(U.num_qubits, circuit.num_qubits - 1))])
+
+    else:
+        for i, q in enumerate(target_qubits):
+            circuit.cswap(control_qubit=aux_idx, target_qubit1=q, target_qubit2=U.num_qubits + i)
 
     circuit.h(aux_idx)
     circuit.measure(aux_idx, c_reg[0])
@@ -129,7 +133,7 @@ def build_qnn_circuit(U, ansatz_reps, target_qubits, entanglement_method='full',
     return circuit, input_parameters, ansatz.parameters
 
 
-def train_by_COBYLA(qnn, xs_train, xs_val, n_epochs, stats_save_dir=None, live_plot=False, seed=42):
+def train_by_COBYLA(qnn, xs_train, xs_val, n_epochs, initial_weights=None, stats_save_dir=None, live_plot=False, seed=42):
 
     # Reset seed for RNG.
     set_seed(seed)
@@ -177,7 +181,61 @@ def train_by_COBYLA(qnn, xs_train, xs_val, n_epochs, stats_save_dir=None, live_p
 
     # Optimiser and initial weights (random for now, but all zeros might be a good idea for degrees of freedom).
     optimiser = COBYLA(maxiter=n_epochs)
-    initial_weights = algorithm_globals.random.random(qnn.num_weights)
+    if initial_weights is None: initial_weights = algorithm_globals.random.random(qnn.num_weights)
+
+    # Do the thing.
+    return optimiser.minimize(loss_fn, x0=initial_weights)
+
+
+def train_by_COBYLA_no_recylcing(qnn, batch_size, n_epochs, initial_weights=None, stats_save_dir=None, live_plot=False, seed=42):
+
+    # Reset seed for RNG.
+    set_seed(seed)
+
+    # Save directory.
+    if stats_save_dir: makedirs(stats_save_dir, exist_ok=True)
+
+    # Figure size.
+    if live_plot: plt.rcParams['figure.figsize'] = (4, 3)
+
+    # Initialise arrays for stats.
+    losses = []
+    runtimes = []
+
+    # Loss function according to the SWAP test.
+    def loss_fn(weights):
+        # Start timing.
+        start = time.time()
+
+        # Sample a batch of input states.
+        xs_train = sample_n_states(n_states=batch_size, n_qubits=qnn.num_inputs//2)
+
+        # Compute loss over the train and validation sets.
+        loss = np.mean(qnn.forward(input_data=xs_train, weights=weights)[:, 1])
+
+        # Stop timing.
+        end = time.time()
+        runtime = end - start
+
+        # Remember the stats.
+        losses.append(loss)
+        runtimes.append(runtime)
+
+        # Plotting.
+        if live_plot: plot_loss_curves(losses, losses, n_epochs)
+
+        # Saving.
+        if stats_save_dir:
+            with open(path.join(stats_save_dir, 'stats.csv'), 'a') as save_file:
+                writer = csv.writer(save_file, delimiter=',')
+                writer.writerow({'Train loss': loss, 'Runtime': runtime})
+
+        # Return train loss only.
+        return loss
+
+    # Optimiser and initial weights (random for now, but all zeros might be a good idea for degrees of freedom).
+    optimiser = COBYLA(maxiter=n_epochs)
+    if initial_weights is None: initial_weights = algorithm_globals.random.random(qnn.num_weights)
 
     # Do the thing.
     return optimiser.minimize(loss_fn, x0=initial_weights)
@@ -285,3 +343,5 @@ def train_by_torch(model, train_loader, val_loader, n_epochs, lr=1e-3, live_plot
 
         # Plotting.
         if live_plot: plot_loss_curves(train_losses, val_losses, n_epochs)
+
+    return train_losses, val_losses

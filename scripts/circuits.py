@@ -56,7 +56,7 @@ def add_random_layer(circuit, seed=None):
     return circuit
 
 
-def build_circuit(n, d, seed=None):
+def build_circuit(n, d, seed=42):
     """
     Build an n-qubit circuit with randomly generated layers to a given depth d.
 
