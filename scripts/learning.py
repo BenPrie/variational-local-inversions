@@ -5,9 +5,8 @@ import numpy as np
 from os import makedirs, path
 import csv
 
-from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
+from qiskit.circuit import QuantumCircuit, QuantumRegister, ClassicalRegister, ParameterVector
 from qiskit.circuit.library import TwoLocal
-from qiskit.circuit import ParameterVector
 
 # Classical ML.
 import torch
@@ -42,10 +41,10 @@ class Loss(Module):
         super(Loss, self).__init__()
 
     def forward(self, x):
-        # Mean probability to measure outcome 1.
+        # Mean probability to measure anything other than 0...0 (i.e. prob. for failure outcome).
         # Single-size batches don't have two dimensions, so they need special treatment.
-        if x.dim() == 1: return x[1]
-        else:            return torch.mean(x[:, 1])
+        if x.dim() == 1: return 1 - x[0]
+        else:            return 1- torch.mean(x[:, 0])
 
 
 def set_seed(seed):
@@ -79,8 +78,8 @@ def build_qnn_circuit(U, ansatz_reps, target_qubits, entanglement_method='full',
     set_seed(seed)
 
     # Instantiate a new circuit with classical register for measurement.
-    q_reg = QuantumRegister(U.num_qubits + len(target_qubits) + 1)
-    c_reg = ClassicalRegister(1)
+    q_reg = QuantumRegister(U.num_qubits + len(target_qubits) + len(target_qubits) ** multi_swap)
+    c_reg = ClassicalRegister(len(target_qubits) ** multi_swap)
     circuit = QuantumCircuit(q_reg, c_reg)
 
     # Prepare an input state (parameterised) consistent between the two sets of qubits.
@@ -114,20 +113,23 @@ def build_qnn_circuit(U, ansatz_reps, target_qubits, entanglement_method='full',
     # Barrier for clarity.
     circuit.barrier()
 
-    # SWAP test for loss business.
-    aux_idx = circuit.num_qubits - 1
+    # Define the auxiliary qubit index(/ices) and prepare them.
+    aux_idx = list(range(circuit.num_qubits - len(target_qubits) ** multi_swap, circuit.num_qubits))
     circuit.h(aux_idx)
 
+    # Global cost function.
     if multi_swap:
-        print(target_qubits, list(range(U.num_qubits, circuit.num_qubits - 1)))
-        circuit.cswap(control_qubit=aux_idx, target_qubit1=q_reg[target_qubits], target_qubit2=q_reg[list(range(U.num_qubits, circuit.num_qubits - 1))])
+        circuit.cswap(control_qubit=aux_idx, target_qubit1=target_qubits,
+                      target_qubit2=np.array(target_qubits) + (U.num_qubits - 1))
 
+    # Local cost function.
     else:
         for i, q in enumerate(target_qubits):
             circuit.cswap(control_qubit=aux_idx, target_qubit1=q, target_qubit2=U.num_qubits + i)
 
+    # Measure.
     circuit.h(aux_idx)
-    circuit.measure(aux_idx, c_reg[0])
+    circuit.measure(aux_idx, c_reg)
 
     # Return the circuit, the input parameters, and the weight parameters.
     return circuit, input_parameters, ansatz.parameters
@@ -155,8 +157,9 @@ def train_by_COBYLA(qnn, xs_train, xs_val, n_epochs, initial_weights=None, stats
         start = time.time()
 
         # Compute loss over the train and validation sets.
-        train_loss = np.mean(qnn.forward(input_data=xs_train, weights=weights)[:, 1])
-        val_loss = np.mean(qnn.forward(input_data=xs_val, weights=weights)[:, 1])
+        # Loss is 1 - P[Y=0] = 1/2 - ((inner prod.)/2)^2.
+        train_loss = 1 - np.mean(qnn.forward(input_data=xs_train, weights=weights)[:, 0])
+        val_loss = 1 - np.mean(qnn.forward(input_data=xs_val, weights=weights)[:, 0])
 
         # Stop timing.
         end = time.time()
@@ -211,7 +214,7 @@ def train_by_COBYLA_no_recylcing(qnn, batch_size, n_epochs, initial_weights=None
         xs_train = sample_n_states(n_states=batch_size, n_qubits=qnn.num_inputs//2)
 
         # Compute loss over the train and validation sets.
-        loss = np.mean(qnn.forward(input_data=xs_train, weights=weights)[:, 1])
+        loss = 1 - np.mean(qnn.forward(input_data=xs_train, weights=weights)[:, 0])
 
         # Stop timing.
         end = time.time()
