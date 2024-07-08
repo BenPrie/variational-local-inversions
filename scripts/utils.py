@@ -10,6 +10,8 @@ from qiskit.quantum_info.random import random_statevector
 
 
 def set_seed(seed):
+    if seed is None: return
+
     algorithm_globals.random_seed = seed
     np.random.seed(seed)
     manual_seed(seed)

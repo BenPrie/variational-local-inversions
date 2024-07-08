@@ -16,7 +16,7 @@ from torch import manual_seed
 
 # Quantum ML.
 from qiskit_algorithms.utils import algorithm_globals
-from qiskit_algorithms.optimizers import COBYLA
+from qiskit_algorithms.optimizers import COBYLA, ADAM, GradientDescent
 
 # Scripts.
 from scripts.utils import sample_haar_random_state_angles, sample_n_states
@@ -48,6 +48,8 @@ class Loss(Module):
 
 
 def set_seed(seed):
+    if seed is None: return
+
     algorithm_globals.random_seed = seed
     np.random.seed(seed)
     manual_seed(seed)
@@ -135,7 +137,7 @@ def build_qnn_circuit(U, ansatz_reps, target_qubits, entanglement_method='full',
     return circuit, input_parameters, ansatz.parameters
 
 
-def train_by_COBYLA(qnn, xs_train, xs_val, n_epochs, initial_weights=None, stats_save_dir=None, live_plot=False, seed=42):
+def train_by_scipy(qnn, xs_train, xs_val, n_epochs, initial_weights=None, method='cobyla', lr=1e-3, stats_save_dir=None, live_plot=False, seed=42):
 
     # Reset seed for RNG.
     set_seed(seed)
@@ -183,11 +185,17 @@ def train_by_COBYLA(qnn, xs_train, xs_val, n_epochs, initial_weights=None, stats
         return train_loss
 
     # Optimiser and initial weights (random for now, but all zeros might be a good idea for degrees of freedom).
-    optimiser = COBYLA(maxiter=n_epochs)
+    # For the time being, only gradient-free methods (e.g. COBYLA) appear to be working properly.
+    if method.lower() == 'adam': optimiser = ADAM(maxiter=n_epochs, lr=lr)
+    elif method.lower() == 'gd': optimiser = GradientDescent(maxiter=n_epochs, learning_rate=lr)
+    else:                        optimiser = COBYLA(maxiter=n_epochs)
     if initial_weights is None: initial_weights = algorithm_globals.random.random(qnn.num_weights)
 
     # Do the thing.
-    return optimiser.minimize(loss_fn, x0=initial_weights)
+    optimiser.minimize(loss_fn, x0=initial_weights)
+
+    # Return the stats.
+    return {'train_loss': train_losses, 'val_loss': val_losses, 'runtime': runtimes}
 
 
 def train_by_COBYLA_no_recylcing(qnn, batch_size, n_epochs, initial_weights=None, stats_save_dir=None, live_plot=False, seed=42):
@@ -241,7 +249,10 @@ def train_by_COBYLA_no_recylcing(qnn, batch_size, n_epochs, initial_weights=None
     if initial_weights is None: initial_weights = algorithm_globals.random.random(qnn.num_weights)
 
     # Do the thing.
-    return optimiser.minimize(loss_fn, x0=initial_weights)
+    optimiser.minimize(loss_fn, x0=initial_weights)
+
+    # Return the stats.
+    return {'loss': losses, 'runtime': runtimes}
 
 
 # Training step (i.e. one epoch).
@@ -347,4 +358,4 @@ def train_by_torch(model, train_loader, val_loader, n_epochs, lr=1e-3, live_plot
         # Plotting.
         if live_plot: plot_loss_curves(train_losses, val_losses, n_epochs)
 
-    return train_losses, val_losses
+    return {'train_loss': train_losses, 'val_loss': val_losses}
