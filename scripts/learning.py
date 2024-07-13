@@ -19,7 +19,7 @@ from qiskit_algorithms.utils import algorithm_globals
 from qiskit_algorithms.optimizers import COBYLA, ADAM, GradientDescent
 
 # Scripts.
-from scripts.utils import sample_haar_random_state_angles, sample_n_states
+from scripts.utils import sample_n_states
 
 # Plotting.
 from IPython.display import clear_output
@@ -137,7 +137,7 @@ def build_qnn_circuit(U, ansatz_reps, target_qubits, entanglement_method='full',
     return circuit, input_parameters, ansatz.parameters
 
 
-def train_by_scipy(qnn, xs_train, xs_val, n_epochs, initial_weights=None, method='cobyla', lr=1e-3, stats_save_dir=None, live_plot=False, seed=42):
+def train_by_scipy(qnn, xs_train, xs_val, n_epochs, initial_weights=None, method='cobyla', lr=1e-3, zero_threshold=1e-2, early_stop_window=100, early_stop_threshold=1e-3, tol=1e-3, stats_save_dir=None, live_plot=False, seed=42):
 
     # Reset seed for RNG.
     set_seed(seed)
@@ -181,6 +181,12 @@ def train_by_scipy(qnn, xs_train, xs_val, n_epochs, initial_weights=None, method
                 writer = csv.writer(save_file, delimiter=',')
                 writer.writerow({'Train loss': train_loss, 'Val loss': val_loss, 'Runtime': runtime})
 
+        # Conditions for early stopping: close enough to zero, not enough improvement in a recent interval (over the best), or close enough to convergence.
+        close_to_zero = val_loss < zero_threshold
+        no_improvement = (len(val_losses) > early_stop_window) and ((abs(min(val_losses) - min(val_losses[-early_stop_window:]))) > early_stop_threshold)
+        probably_converged = (len(val_losses) > early_stop_window) and max(val_losses[-early_stop_window:]) - min(val_losses[-early_stop_window:]) < early_stop_threshold
+        if close_to_zero or no_improvement or probably_converged: raise StopIteration
+
         # Return train loss only.
         return train_loss
 
@@ -188,11 +194,15 @@ def train_by_scipy(qnn, xs_train, xs_val, n_epochs, initial_weights=None, method
     # For the time being, only gradient-free methods (e.g. COBYLA) appear to be working properly.
     if method.lower() == 'adam': optimiser = ADAM(maxiter=n_epochs, lr=lr)
     elif method.lower() == 'gd': optimiser = GradientDescent(maxiter=n_epochs, learning_rate=lr)
-    else:                        optimiser = COBYLA(maxiter=n_epochs)
+    else:                        optimiser = COBYLA(maxiter=n_epochs, tol=tol)
+
     if initial_weights is None: initial_weights = algorithm_globals.random.random(qnn.num_weights)
 
     # Do the thing.
-    optimiser.minimize(loss_fn, x0=initial_weights)
+    try:
+        optimiser.minimize(loss_fn, x0=initial_weights)
+    except:
+        pass
 
     # Return the stats.
     return {'train_loss': train_losses, 'val_loss': val_losses, 'runtime': runtimes}
