@@ -137,7 +137,7 @@ def build_qnn_circuit(U, ansatz_reps, target_qubits, entanglement_method='full',
     return circuit, input_parameters, ansatz.parameters
 
 
-def train_by_scipy(qnn, xs_train, xs_val, n_epochs, initial_weights=None, method='cobyla', lr=1e-3, zero_threshold=1e-2, early_stop_window=100, early_stop_threshold=1e-3, tol=1e-3, stats_save_dir=None, live_plot=False, seed=42):
+def train_by_scipy(qnn, xs_train, xs_val, n_epochs, initial_weights=None, method='cobyla', lr=1e-3, zero_threshold=1e-2, early_stop_window=100, early_stop_threshold=1e-3, early_stop_on_train=False, tol=1e-3, stats_save_dir=None, live_plot=False, seed=42):
 
     # Reset seed for RNG.
     set_seed(seed)
@@ -186,6 +186,14 @@ def train_by_scipy(qnn, xs_train, xs_val, n_epochs, initial_weights=None, method
         no_improvement = (len(val_losses) > early_stop_window) and ((abs(min(val_losses) - min(val_losses[-early_stop_window:]))) > early_stop_threshold)
         probably_converged = (len(val_losses) > early_stop_window) and max(val_losses[-early_stop_window:]) - min(val_losses[-early_stop_window:]) < early_stop_threshold
         if close_to_zero or no_improvement or probably_converged: raise StopIteration
+
+        if early_stop_on_train:
+            close_to_zero = val_loss < zero_threshold
+            no_improvement = (len(train_losses) > early_stop_window) and (
+                        (abs(min(train_losses) - min(train_losses[-early_stop_window:]))) > early_stop_threshold)
+            probably_converged = (len(train_losses) > early_stop_window) and max(train_losses[-early_stop_window:]) - min(
+                train_losses[-early_stop_window:]) < early_stop_threshold
+            if close_to_zero or no_improvement or probably_converged: raise StopIteration
 
         # Return train loss only.
         return train_loss
